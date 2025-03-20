@@ -6,6 +6,9 @@ import logging
 import requests
 import secrets
 
+# 配置信息
+# blacklist.txt和groups.txt必须是utf-8编码，不能是utf-8-bom编码
+
 # 配置日志
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)

@@ -1,0 +1,2 @@
+2025-03-20 21:51:29,391 - ERROR - 拉取黑名单失败: Invalid URL '/blacklist.txt': No scheme supplied. Perhaps you meant https:///blacklist.txt?
+2025-03-20 21:51:29,393 - CRITICAL - 启动时黑名单同步失败，程序终止

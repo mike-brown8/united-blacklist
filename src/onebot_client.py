@@ -26,19 +26,23 @@ stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
 logger.addHandler(stream_handler)
 
+# 在全局变量区域新增
+current_blacklist = []  # 存储内存中的黑名单
+
 async def fetch_blacklist():
     """从服务器拉取黑名单文件"""
+    global current_blacklist
     try:
         response = requests.get(blacklist_url, timeout=10)
         response.raise_for_status()
         
-        with open('blacklist.txt', 'w', encoding='utf-8-sig') as f:
-            f.write(response.text)
-        logging.info("成功更新黑名单文件")
+        # 直接更新内存中的黑名单
+        current_blacklist = [line.strip() for line in response.text.split('\n') if line.strip()]
+        logging.info("成功更新内存黑名单")
         
     except Exception as e:
         logging.error(f"拉取黑名单失败: {str(e)}")
-        raise  # 启动失败时需要抛出异常
+        raise
 
 async def scheduled_sync():
     """定时同步任务"""
@@ -85,10 +89,8 @@ async def handle_message(event):
         operator_id = event.get('operator_id', 0)
         
         try:
-            with open('blacklist.txt', 'r', encoding='utf-8-sig') as f:
-                blacklist = [line.strip() for line in f.readlines()]
-                
-            if str(user_id) in blacklist:
+            # 替换本地文件读取为内存读取
+            if str(user_id) in current_blacklist:
                 logging.info(
                     f"黑名单成员 {user_id} 通过 {sub_type} 方式加入群 {group_id}，"
                     f"操作者：{operator_id}"
@@ -178,10 +180,10 @@ async def startup_scan():
     
     groups = load_groups()
     try:
-        with open('blacklist.txt', 'r', encoding='utf-8-sig') as f:
-            blacklist = [line.strip() for line in f.readlines()]
-    except FileNotFoundError:
-        logging.warning("未找到 blacklist.txt 文件")
+        # 直接使用内存中的黑名单
+        blacklist = current_blacklist
+    except Exception as e:
+        logging.error(f"黑名单数据异常: {str(e)}")
         return
 
     try:

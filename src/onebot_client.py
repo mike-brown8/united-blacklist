@@ -7,7 +7,9 @@ import requests
 import secrets
 
 # 配置信息
-# blacklist.txt和groups.txt必须是utf-8编码，不能是utf-8-bom编码
+list_server = ''
+blacklist_url = f"{list_server}/blacklist.txt"  # 新增黑名单URL配置
+# groups.txt中设置你有管理员的群号，一行一个，必须是utf-8编码
 
 # 配置日志
 logger = logging.getLogger()
@@ -23,6 +25,29 @@ logger.addHandler(file_handler)
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
 logger.addHandler(stream_handler)
+
+async def fetch_blacklist():
+    """从服务器拉取黑名单文件"""
+    try:
+        response = requests.get(blacklist_url, timeout=10)
+        response.raise_for_status()
+        
+        with open('blacklist.txt', 'w', encoding='utf-8-sig') as f:
+            f.write(response.text)
+        logging.info("成功更新黑名单文件")
+        
+    except Exception as e:
+        logging.error(f"拉取黑名单失败: {str(e)}")
+        raise  # 启动失败时需要抛出异常
+
+async def scheduled_sync():
+    """定时同步任务"""
+    while True:
+        await asyncio.sleep(6 * 3600)  # 6小时间隔
+        try:
+            await fetch_blacklist()
+        except Exception as e:
+            logging.error(f"定时同步黑名单失败: {str(e)}")
 
 def load_groups():
     """加载允许处理的群号列表"""
@@ -195,7 +220,17 @@ async def startup_scan():
         logging.error(f"启动扫描出错: {str(e)}")
 
 async def main():
+    # 启动时首次同步
+    try:
+        await fetch_blacklist()
+    except Exception:
+        logging.critical("启动时黑名单同步失败，程序终止")
+        raise SystemExit  # 终止程序
+    # 启动定时任务
+    asyncio.create_task(scheduled_sync())
+    # 启动扫描任务
     await startup_scan()
+    # 启动WebSocket服务器
     async with serve(websocket_handler, "0.0.0.0", 6700) as server:
         await server.wait_closed()
     await asyncio.Future()

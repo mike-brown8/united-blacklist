@@ -1,0 +1,201 @@
+import asyncio
+import json
+import random
+from websockets import serve
+import logging
+import requests
+import secrets
+
+# 配置日志
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# 文件处理器
+file_handler = logging.FileHandler('onebot_client.log')
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+# 控制台处理器
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+logger.addHandler(stream_handler)
+
+def load_groups():
+    """加载允许处理的群号列表"""
+    try:
+        with open('groups.txt', 'r', encoding='utf-8-sig') as f:
+            return [line.strip() for line in f.readlines()]
+    except FileNotFoundError:
+        logging.warning("未找到 groups.txt 文件")
+        return []
+
+async def handle_message(event):
+    """处理OneBot事件"""
+    post_type = event.get('post_type')
+    meta_event_type = event.get('meta_event_type')
+    if post_type == 'meta_event' and meta_event_type in ['lifecycle', 'heartbeat']:
+        if meta_event_type == 'lifecycle':
+            logging.info(f"收到生命周期消息: {event}")
+        elif meta_event_type == 'heartbeat':
+            logging.info(f"收到心跳消息: {event}")
+        return None
+
+    if not all(key in event for key in ['post_type', 'notice_type']):
+        logging.warning(f"收到无效事件格式：{event}")
+        return None
+
+    groups = load_groups()
+    
+    if event.get('post_type') == 'notice' and event.get('notice_type') == 'group_increase':
+        user_id = event['user_id']
+        group_id = event['group_id']
+        if str(group_id) not in groups:
+            return None
+
+        sub_type = event.get('sub_type', 'approve')
+        operator_id = event.get('operator_id', 0)
+        
+        try:
+            with open('blacklist.txt', 'r', encoding='utf-8-sig') as f:
+                blacklist = [line.strip() for line in f.readlines()]
+                
+            if str(user_id) in blacklist:
+                logging.info(
+                    f"黑名单成员 {user_id} 通过 {sub_type} 方式加入群 {group_id}，"
+                    f"操作者：{operator_id}"
+                )
+                
+                predefined_messages = [
+                    "您好呀，这个群可能不太适合您长留呢，祝您在其他地方找到更多乐趣。",
+                    "欢迎短暂来到我们群，不过这里或许不是您的最佳归属，祝您有好的旅程。",
+                    "看来您不小心来到了我们的小天地，这里可能不太符合您的需求哦。",
+                    "嘿，朋友，这个群可能和您有点“气场不合”，去别处看看吧。",
+                    "您来到我们群啦，不过这里可能没有您期待的内容，祝您一切顺利。",
+                    "温馨提示，这个群不太能满足您，希望您能找到更合适的地方。",
+                    "您好，本群可能不是您理想的交流地，祝您在其他群玩得开心。",
+                    "欢迎光临，但我们群可能和您的兴趣不太匹配，祝您有好的体验。",
+                    "哎呀，您误进我们群啦，去更适合您的地方说不定会更好。",
+                    "您来到我们群啦，不过可能这里不是您的“主场”，祝您生活愉快。",
+                    "嘿，这里可能不是您要找的群，祝您在其他地方收获满满。",
+                    "本群也许和您的节奏不太一样，希望您能找到合拍的群体。",
+                    "您好，这个群可能无法给您想要的，去别处找找说不定有惊喜。",
+                    "欢迎到我们群转了一圈，不过这里可能不是您的长久之选。",
+                    "看来您和我们群的缘分有点浅，祝您在其他地方一切都好。",
+                    "您来到这个群啦，可惜可能不太对您的“胃口”，祝您顺心如意。",
+                    "嘿，朋友，这个群不太适合您，去寻找更契合您的群吧。",
+                    "温馨告知，这里可能不是您的理想群聊，祝您找到合适的。",
+                    "您好，本群可能满足不了您的需求，祝您在其他群里畅聊。",
+                    "哎呀，您来错群啦，去更适合您的群里开启新的交流吧。"
+                ]
+                
+                try:
+                    msg_delay = secrets.randbelow(2001) / 1000 + 1
+                    await asyncio.sleep(msg_delay)
+                    
+                    msg_response = requests.post(
+                        'http://localhost:3000/send_group_msg',
+                        json={
+                            'group_id': group_id,
+                            'message': [{
+                                'type': 'text',
+                                'data': {'text': secrets.choice(predefined_messages)}
+                            }]
+                        }
+                    )
+                    
+                    kick_delay = secrets.randbelow(501) / 1000 + 0.5
+                    await asyncio.sleep(kick_delay)
+                    
+                    kick_response = requests.post(
+                        'http://localhost:3000/set_group_kick',
+                        json={'group_id': group_id, 'user_id': user_id}
+                    )
+                    
+                    if msg_response.status_code != 200:
+                        logging.error(f"发送消息失败: {msg_response.text}")
+                    if kick_response.status_code != 200:
+                        logging.error(f"踢出失败: {kick_response.text}")
+
+                    return [
+                        {"status_code": msg_response.status_code, "text": msg_response.text},
+                        {"status_code": kick_response.status_code, "text": kick_response.text}
+                    ]
+                except Exception as e:
+                    logging.error(f"操作执行失败: {str(e)}")
+
+        except FileNotFoundError:
+            logging.warning("未找到 blacklist.txt 文件")
+
+    elif event.get('post_type') == 'message' and event.get('message_type') == 'group':
+        if 'group_id' not in event:
+            return None
+        if str(event['group_id']) not in groups:
+            return None
+
+    return None
+
+async def websocket_handler(websocket):
+    async for message in websocket:
+        try:
+            event = json.loads(message)
+            if response := await handle_message(event):
+                await websocket.send(json.dumps(response))
+        except json.JSONDecodeError:
+            logging.error(f"无效的JSON数据：{message}")
+
+async def startup_scan():
+    """启动时扫描所有已加入群的成员"""
+    logging.info("开始执行启动扫描任务")
+    
+    groups = load_groups()
+    try:
+        with open('blacklist.txt', 'r', encoding='utf-8-sig') as f:
+            blacklist = [line.strip() for line in f.readlines()]
+    except FileNotFoundError:
+        logging.warning("未找到 blacklist.txt 文件")
+        return
+
+    try:
+        group_list_res = requests.post('http://localhost:3000/get_group_list')
+        if group_list_res.status_code != 200:
+            logging.error(f"获取群列表失败: {group_list_res.text}")
+            return
+
+        allowed_groups = [
+            int(g['group_id']) for g in group_list_res.json().get('data', [])
+            if str(g['group_id']) in groups
+        ]
+
+        for group_id in allowed_groups:
+            member_res = requests.post(
+                'http://localhost:3000/get_group_member_list',
+                json={'group_id': group_id}
+            )
+            if member_res.status_code != 200:
+                logging.error(f"获取群{group_id}成员失败: {member_res.text}")
+                continue
+
+            for member in member_res.json().get('data', []):
+                user_id = str(member.get('user_id', ''))
+                if user_id in blacklist:
+                    kick_res = requests.post(
+                        'http://localhost:3000/set_group_kick',
+                        json={'group_id': group_id, 'user_id': user_id}
+                    )
+                    if kick_res.status_code == 200:
+                        logging.info(f"启动扫描踢出黑名单用户 {user_id}（群 {group_id}）")
+                    else:
+                        logging.error(f"踢出失败: {kick_res.text}")
+
+    except Exception as e:
+        logging.error(f"启动扫描出错: {str(e)}")
+
+async def main():
+    await startup_scan()
+    async with serve(websocket_handler, "0.0.0.0", 6700) as server:
+        await server.wait_closed()
+    await asyncio.Future()
+
+if __name__ == "__main__":
+    asyncio.run(main())

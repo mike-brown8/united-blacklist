@@ -259,19 +259,33 @@ async def startup_scan():
         logging.error(f"启动扫描出错: {str(e)}")
 
 async def main():
-    # 启动时首次同步
     try:
+        # 启动时首次同步
         await fetch_blacklist()
     except Exception:
         logging.critical("启动时黑名单同步失败，程序终止")
         raise SystemExit  # 终止程序
     # 启动定时任务
-    asyncio.create_task(scheduled_sync())
+    scheduled_task = asyncio.create_task(scheduled_sync())
     # 启动扫描任务
     await startup_scan()
     # 启动WebSocket服务器
-    async with serve(websocket_handler, "0.0.0.0", 6700) as server:
+    server = await serve(websocket_handler, "0.0.0.0", 6700)
+    try:
+        logging.info("程序已启动，按 Ctrl - C 停止程序")
         await server.wait_closed()
+    except KeyboardInterrupt:
+        logging.info("收到 Ctrl - C 信号，正在停止程序...")
+        # 取消定时任务
+        scheduled_task.cancel()
+        try:
+            await scheduled_task
+        except asyncio.CancelledError:
+            logging.info("定时任务已取消")
+        # 关闭WebSocket服务器
+        server.close()
+        await server.wait_closed()
+        logging.info("WebSocket服务器已关闭，程序已停止")
     await asyncio.Future()
 
 if __name__ == "__main__":

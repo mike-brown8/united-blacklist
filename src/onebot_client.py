@@ -129,7 +129,7 @@ async def handle_message(event):
                             'group_id': group_id,
                             'message': [{
                                 'type': 'text',
-                                'data': {'text': secrets.choice(predefined_messages)}
+                                'data': {'text': f'[CQ:at,qq={user_id}] ' + secrets.choice(predefined_messages)}
                             }]
                         }
                     )

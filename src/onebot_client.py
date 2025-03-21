@@ -128,8 +128,11 @@ async def handle_message(event):
                         json={
                             'group_id': group_id,
                             'message': [{
+                                "type": "at",
+                                "data": {"qq": f"{user_id}", "name": f"{user_id}"}
+                                }, {
                                 'type': 'text',
-                                'data': {'text': f'[CQ:at,qq={user_id}] ' + secrets.choice(predefined_messages)}
+                                'data': {'text': ' ' + secrets.choice(predefined_messages)}
                             }]
                         }
                     )

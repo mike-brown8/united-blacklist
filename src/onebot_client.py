@@ -9,6 +9,8 @@ import secrets
 # 配置信息
 list_server = ''
 blacklist_url = f"{list_server}/blacklist.txt"  # 新增黑名单URL配置
+# 在全局配置部分添加 ntfy 配置项
+ntfy_url = ""  # 可在配置文件中设置 ntfy 的 URL，为空则不提醒掉线
 # groups.txt中设置你有管理员的群号，一行一个，必须是utf-8编码
 
 # 配置日志
@@ -62,16 +64,48 @@ def load_groups():
         logging.warning("未找到 groups.txt 文件")
         return []
 
+
+# 新增全局变量，用于记录连续掉线的心跳包次数
+consecutive_offline_count = 0
+
 async def handle_message(event):
+    global consecutive_offline_count
     """处理OneBot事件"""
     post_type = event.get('post_type')
     meta_event_type = event.get('meta_event_type')
     if post_type == 'meta_event' and meta_event_type in ['lifecycle', 'heartbeat']:
         if meta_event_type == 'lifecycle':
-            logging.info(f"收到生命周期消息: {event}")
+            sub_type = event.get('sub_type')
+            if sub_type == 'connect':
+                self_id = event.get('self_id')
+                if self_id:
+                    logging.info(f"self_id {self_id} 已连接到中间件")
+                else:
+                    logging.warning("收到生命周期连接消息，但未包含 self_id")
+            else:
+                logging.info(f"收到生命周期消息: {event}")
         elif meta_event_type == 'heartbeat':
             logging.info(f"收到心跳消息: {event}")
-        return None
+            status = event.get('status', {})
+            online = status.get('online', True)
+            self_id = event.get('self_id')
+            if not online:
+                consecutive_offline_count += 1
+                logging.critical(f"self_id {self_id} QQ 掉线，心跳检测 online 为 False，连续掉线次数: {consecutive_offline_count}")
+                if ntfy_url:
+                    try:
+                        message = f"self_id {self_id} QQ 掉线，心跳检测 online 为 False，连续掉线次数: {consecutive_offline_count}"
+                        requests.post(ntfy_url, data=message.encode(encoding='utf-8'), verify=False)
+                        logging.info(f"已通过 ntfy 发送 QQ 掉线通知到 {ntfy_url}")
+                    except Exception as e:
+                        logging.error(f"通过 ntfy 发送通知失败: {str(e)}")
+                if consecutive_offline_count >= 2:
+                    logging.critical("连续两次心跳包显示掉线，程序将结束运行。")
+                    raise SystemExit  # 终止程序
+            else:
+                # 如果当前心跳包显示在线，将连续掉线次数重置为 0
+                consecutive_offline_count = 0
+            return None
 
     if not all(key in event for key in ['post_type', 'notice_type']):
         logging.warning(f"收到无效事件格式：{event}")
